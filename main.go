@@ -38,6 +38,10 @@ import (
 	"os"
 	"strings"
 	"time"
+    "regexp"
+    "os/exec"
+    "crypto/md5"
+    "encoding/base64"
 	"github.com/fw42/go-hpfeeds"
 )
 
@@ -94,15 +98,19 @@ var Conf Config
 
 // Attack is a struct that contains the details of an attack entry
 type Attack struct {
-	SourceIP  string    `json:"source"`
-	Timestamp time.Time `json:"@timestamp"`
-	URL       string    `json:"url"`
-	Method    string    `json:"method"`
-	Form      string    `json:"form"`
-	Payload   string    `json:"payload"`
-	Headers   Headers   `json:"headers"`
-	Type      string    `json:"type"`
-	SensorIP  string    `json:"honeypot"`
+	SourceIP        string    `json:"source"`
+	Timestamp       time.Time `json:"@timestamp"`
+	URL             string    `json:"url"`
+	Method          string    `json:"method"`
+	Form            string    `json:"form"`
+	Payload         string    `json:"payload"`
+    PayloadCommand  string    `json:"payloadCommand"`
+    PayloadResource string    `json:"payloadResource"`
+    PayloadMd5      string    `json:"payloadMd5"`
+    PayloadBinary   string    `json:"payloadBinary"`
+	Headers         Headers   `json:"headers"`
+	Type            string    `json:"type"`
+	SensorIP        string    `json:"honeypot"`
 }
 
 // Headers contains the filtered headers of the HTTP request
@@ -220,6 +228,59 @@ func FakeSearch(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// Give the raw payload, parse out the command and resource.
+// Resource could be an IP, Domain, or URL
+func parsePayload(payload string) (string, string) {
+
+    // Noticed lots of requests that substituted http:// with http;//
+    payload = strings.Replace(payload, ";//", "://", -1)
+
+    re := regexp.MustCompile(`(wget|curl|ping)\s+[^\\"]*`)
+    match := re.FindString(payload)
+    parts := strings.Fields(match)
+
+    // Return if there were no matches
+    if parts == nil || len(parts) < 2 {
+        return "", ""
+    }
+
+    // Resource can be a Domain, URL, or IP
+    resource := parts[len(parts)-1]
+    command := parts[0]
+
+    return command, resource
+}
+
+// Do the associated command, HTTP request, ping
+func executeCommand(command string, resource string) ([]byte) {
+
+    // Initialize an empty response object
+    empty := make([]byte, 0)
+
+    if strings.EqualFold(command, "wget") || strings.EqualFold(command, "curl") {
+        resp, err := http.Get(resource)
+        if err != nil {
+            log.Printf("[!] Error: %s\n", err)
+            return empty
+        }
+        defer resp.Body.Close()
+        body, err := ioutil.ReadAll(resp.Body)
+        if err != nil {
+            log.Printf("[!] Error: %s\n", err)
+            return empty
+        }
+        return body
+    } else if strings.EqualFold(command, "ping") {
+        out, err := exec.Command("ping", "-n", "-c", "10", resource).Output()
+        var _ = out
+        if err != nil {
+            log.Printf("[!] Error: %s\n", err)
+            return empty
+        }
+    }
+    return empty
+}
+
 // LogRequest handles the logging of requests to configurable endpoints
 func LogRequest(r *http.Request, t string) {
 	as_c := new(bytes.Buffer)
@@ -232,14 +293,32 @@ func LogRequest(r *http.Request, t string) {
 	if err != nil {
 		logger.Printf("[!] Error: %s\n", err)
 	}
+
+    // Extract payload
+    command, resource := parsePayload(string(body))
+    payloadBinary := make([]byte, 0)
+    md5sum := ""
+    if command == "" && resource == "" {
+        logger.Printf("[!] Error Parsing Payload: %s\n", body)
+    } else {
+        payloadBinary = executeCommand(command, resource)
+        if len(payloadBinary) > 0 {
+            md5sum = fmt.Sprintf("%x", md5.Sum(payloadBinary))
+        }
+    }
+
 	// Create the attack entry
 	attack := Attack{
-		Timestamp: time.Now(),
-		SourceIP:  ip,
-		Method:    r.Method,
-		URL:       strings.Join([]string{r.Host, r.URL.String()}, ""),
-		Form:      r.Form.Encode(),
-		Payload:   string(body),
+		Timestamp:       time.Now(),
+		SourceIP:        ip,
+		Method:          r.Method,
+		URL:             strings.Join([]string{r.Host, r.URL.String()}, ""),
+		Form:            r.Form.Encode(),
+		Payload:         string(body),
+        PayloadCommand:  command,
+        PayloadResource: resource,
+        PayloadMd5:      md5sum,
+        PayloadBinary:   base64.StdEncoding.EncodeToString(payloadBinary),
 		Headers: Headers{
 			Host:           r.Host,
 			UserAgent:      r.UserAgent(),
@@ -249,6 +328,7 @@ func LogRequest(r *http.Request, t string) {
 		SensorIP: Conf.SensorIP,
 		Type:     t,
 	}
+
 	// Convert to JSON
 	as, err := JSONMarshal(attack)
 	if err != nil {
@@ -338,7 +418,6 @@ func hpfeedsConnect() {
 		}
 	}
 }
-
 
 func main() {
 	flag.Parse()
