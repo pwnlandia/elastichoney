@@ -39,7 +39,6 @@ import (
 	"strings"
 	"time"
 	"regexp"
-	"os/exec"
 	"crypto/md5"
 	"encoding/base64"
 	"github.com/fw42/go-hpfeeds"
@@ -235,7 +234,7 @@ func parsePayload(payload string) (string, string) {
 	// Noticed lots of requests that substituted http:// with http;//
 	payload = strings.Replace(payload, ";//", "://", -1)
 
-	re := regexp.MustCompile(`(wget|curl|ping)\s+[^\\"]*`)
+	re := regexp.MustCompile(`(wget|curl)\s+[^\\"]*`)
 	match := re.FindString(payload)
 	parts := strings.Fields(match)
 
@@ -251,7 +250,7 @@ func parsePayload(payload string) (string, string) {
 	return command, resource
 }
 
-// Do the associated command, HTTP request, ping
+// Do the associated command, HTTP request
 func executeCommand(command string, resource string) ([]byte) {
 
 	// Initialize an empty response object
@@ -270,13 +269,6 @@ func executeCommand(command string, resource string) ([]byte) {
 			return empty
 		}
 		return body
-	} else if strings.EqualFold(command, "ping") {
-		out, err := exec.Command("ping", "-n", "-c", "10", resource).Output()
-		var _ = out
-		if err != nil {
-			log.Printf("[!] Error: %s\n", err)
-			return empty
-		}
 	}
 	return empty
 }
@@ -294,12 +286,27 @@ func LogRequest(r *http.Request, t string) {
 		logger.Printf("[!] Error: %s\n", err)
 	}
 
-	// Extract payload
-	command, resource := parsePayload(string(body))
+	// Parse the payload
+	toParse := ""
+	if strings.Contains(r.Header.Get("Content-Type"), "form") || len(body) == 0 {
+		// Handle form encoded requests
+		jsonString, err := json.Marshal(r.Form)
+		if err != nil {
+			logger.Printf("[!] Error: %s\n", err)
+		}
+		toParse = string(jsonString)
+	} else {
+		// Otherwise assume the payload is in the body
+		toParse = string(body)
+	}
+
+	// Execute the command and grab the file, is possible
+	command, resource := parsePayload(toParse)
 	payloadBinary := make([]byte, 0)
 	md5sum := ""
 	if command == "" && resource == "" {
-		logger.Printf("[!] Error Parsing Payload: %s\n", body)
+		// Could not parse the payload, or no command found in the payload
+		logger.Printf("[!] No curl or wget commands found in body or form")
 	} else {
 		payloadBinary = executeCommand(command, resource)
 		if len(payloadBinary) > 0 {
@@ -336,6 +343,7 @@ func LogRequest(r *http.Request, t string) {
 	}
 	err = json.Compact(as_c, as)
 	fmt.Printf("%s\n", as)
+
 	// Log the entry
 	f, err := os.OpenFile(*logFlag, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0660)
 	if err != nil {
