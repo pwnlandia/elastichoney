@@ -38,6 +38,9 @@ import (
 	"os"
 	"strings"
 	"time"
+	"regexp"
+	"crypto/md5"
+	"encoding/base64"
 	"github.com/fw42/go-hpfeeds"
 )
 
@@ -94,15 +97,19 @@ var Conf Config
 
 // Attack is a struct that contains the details of an attack entry
 type Attack struct {
-	SourceIP  string    `json:"source"`
-	Timestamp time.Time `json:"@timestamp"`
-	URL       string    `json:"url"`
-	Method    string    `json:"method"`
-	Form      string    `json:"form"`
-	Payload   string    `json:"payload"`
-	Headers   Headers   `json:"headers"`
-	Type      string    `json:"type"`
-	SensorIP  string    `json:"honeypot"`
+	SourceIP        string    `json:"source"`
+	Timestamp       time.Time `json:"@timestamp"`
+	URL             string    `json:"url"`
+	Method          string    `json:"method"`
+	Form            string    `json:"form"`
+	Payload         string    `json:"payload"`
+	PayloadCommand  string    `json:"payloadCommand"`
+	PayloadResource string    `json:"payloadResource"`
+	PayloadMd5      string    `json:"payloadMd5"`
+	PayloadBinary   string    `json:"payloadBinary"`
+	Headers         Headers   `json:"headers"`
+	Type            string    `json:"type"`
+	SensorIP        string    `json:"honeypot"`
 }
 
 // Headers contains the filtered headers of the HTTP request
@@ -119,17 +126,17 @@ type Headers struct {
 func FakeBanner(w http.ResponseWriter, r *http.Request) {
 	LogRequest(r, "recon")
 	response := fmt.Sprintf(`{
-        "status" : 200,
-        "name" : "%s",
-        "cluster_name" : "elasticsearch",
-        "version" : {
-            "number" : "%s",
-            "build_hash" : "89d3241d670db65f994242c8e838b169779e2d4",
-            "build_snapshot" : false,
-            "lucene_version" : "4.10.2"
-        },
-        "tagline" : "You Know, for Search"
-    }`, Conf.InstanceName, Conf.SpoofedVersion)
+		"status" : 200,
+		"name" : "%s",
+		"cluster_name" : "elasticsearch",
+		"version" : {
+			"number" : "%s",
+			"build_hash" : "89d3241d670db65f994242c8e838b169779e2d4",
+			"build_snapshot" : false,
+			"lucene_version" : "4.10.2"
+		},
+		"tagline" : "You Know, for Search"
+	}`, Conf.InstanceName, Conf.SpoofedVersion)
 	WriteResponse(w, response)
 	return
 }
@@ -140,54 +147,54 @@ func FakeNodes(w http.ResponseWriter, r *http.Request) {
 	LogRequest(r, "recon")
 	response := fmt.Sprintf(`
 	{
-        "cluster_name" : "elasticsearch",
-        "nodes" : {
-            "x1JG6g9PRHy6ClCOO2-C4g" : {
-              "name" : "%s",
-              "transport_address" : "inet[/
+		"cluster_name" : "elasticsearch",
+		"nodes" : {
+			"x1JG6g9PRHy6ClCOO2-C4g" : {
+			  "name" : "%s",
+			  "transport_address" : "inet[/
 			%s:9300]",
-              "host" : "elk",
-              "ip" : "127.0.1.1",
-              "version" : "%s",
-              "build" : "89d3241",
-              "http_address" : "inet[/%s:9200]",
-              "os" : {
-                "refresh_interval_in_millis" : 1000,
-                "available_processors" : 12,
-                "cpu" : {
-                  "total_cores" : 24,
-                  "total_sockets" : 48,
-                  "cores_per_socket" : 2
-                }
-              },
-              "process" : {
-                "refresh_interval_in_millis" : 1000,
-                "id" : 2039,
-                "max_file_descriptors" : 65535,
-                "mlockall" : false
-              },
-              "jvm" : {
-                "version" : "1.7.0_65"
-              },
-              "network" : {
-                "refresh_interval_in_millis" : 5000,
-                "primary_interface" : {
-                  "address" : "%s",
-                  "name" : "eth0",
-                  "mac_address" : "08:01:c7:3F:15:DD"
-                }
-              },
-              "transport" : {
-                "bound_address" : "inet[/0:0:0:0:0:0:0:0:9300]",
-                "publish_address" : "inet[/%s:9300]"
-              },
-              "http" : {
-                "bound_address" : "inet[/0:0:0:0:0:0:0:0:9200]",
-                "publish_address" : "inet[/%s:9200]",
-                "max_content_length_in_bytes" : 104857600
-              }}
-            }
-        }`, Conf.InstanceName, Conf.SensorIP, Conf.SpoofedVersion, Conf.SensorIP, Conf.SensorIP, Conf.SensorIP, Conf.SensorIP)
+			  "host" : "elk",
+			  "ip" : "127.0.1.1",
+			  "version" : "%s",
+			  "build" : "89d3241",
+			  "http_address" : "inet[/%s:9200]",
+			  "os" : {
+				"refresh_interval_in_millis" : 1000,
+				"available_processors" : 12,
+				"cpu" : {
+				  "total_cores" : 24,
+				  "total_sockets" : 48,
+				  "cores_per_socket" : 2
+				}
+			  },
+			  "process" : {
+				"refresh_interval_in_millis" : 1000,
+				"id" : 2039,
+				"max_file_descriptors" : 65535,
+				"mlockall" : false
+			  },
+			  "jvm" : {
+				"version" : "1.7.0_65"
+			  },
+			  "network" : {
+				"refresh_interval_in_millis" : 5000,
+				"primary_interface" : {
+				  "address" : "%s",
+				  "name" : "eth0",
+				  "mac_address" : "08:01:c7:3F:15:DD"
+				}
+			  },
+			  "transport" : {
+				"bound_address" : "inet[/0:0:0:0:0:0:0:0:9300]",
+				"publish_address" : "inet[/%s:9300]"
+			  },
+			  "http" : {
+				"bound_address" : "inet[/0:0:0:0:0:0:0:0:9200]",
+				"publish_address" : "inet[/%s:9200]",
+				"max_content_length_in_bytes" : 104857600
+			  }}
+			}
+		}`, Conf.InstanceName, Conf.SensorIP, Conf.SpoofedVersion, Conf.SensorIP, Conf.SensorIP, Conf.SensorIP, Conf.SensorIP)
 	WriteResponse(w, response)
 	return
 }
@@ -197,27 +204,73 @@ func FakeSearch(w http.ResponseWriter, r *http.Request) {
 	LogRequest(r, "attack")
 	response := fmt.Sprintf(`
 	{
-        "took" : 6,
-        "timed_out" : false,
-        "_shards" : {
-            "total" : 6,
-            "successful" : 6,
-            "failed" : 0
-        },
-        "hits" : {
-            "total" : 1,
-            "max_score" : 1.0,
-            "hits" : [ {
-                "_index" : ".kibana",
-                "_type" : "index-pattern",
-                "_id" : "logstash-*",
-                "_score" : 1.0,
-                "_source":{"title":"logstash-*","timeFieldName":"@timestamp","customFormats":"{}","fields":"[{\"type\":\"string\",\"indexed\":true,\"analyzed\":true,\"doc_values\":false,\"name\":\"host\",\"count\":0},{\"type\":\"string\",\"indexed\":false,\"analyzed\":false,\"name\":\"_source\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"message.raw\",\"count\":0},{\"type\":\"string\",\"indexed\":false,\"analyzed\":false,\"name\":\"_index\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"@version\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":true,\"doc_values\":false,\"name\":\"message\",\"count\":0},{\"type\":\"date\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"@timestamp\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"name\":\"_type\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"name\":\"_id\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"host.raw\",\"count\":0},{\"type\":\"geo_point\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"geoip.location\",\"count\":0}]"}
-            }]
-        }
-    }`)
+		"took" : 6,
+		"timed_out" : false,
+		"_shards" : {
+			"total" : 6,
+			"successful" : 6,
+			"failed" : 0
+		},
+		"hits" : {
+			"total" : 1,
+			"max_score" : 1.0,
+			"hits" : [ {
+				"_index" : ".kibana",
+				"_type" : "index-pattern",
+				"_id" : "logstash-*",
+				"_score" : 1.0,
+				"_source":{"title":"logstash-*","timeFieldName":"@timestamp","customFormats":"{}","fields":"[{\"type\":\"string\",\"indexed\":true,\"analyzed\":true,\"doc_values\":false,\"name\":\"host\",\"count\":0},{\"type\":\"string\",\"indexed\":false,\"analyzed\":false,\"name\":\"_source\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"message.raw\",\"count\":0},{\"type\":\"string\",\"indexed\":false,\"analyzed\":false,\"name\":\"_index\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"@version\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":true,\"doc_values\":false,\"name\":\"message\",\"count\":0},{\"type\":\"date\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"@timestamp\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"name\":\"_type\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"name\":\"_id\",\"count\":0},{\"type\":\"string\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"host.raw\",\"count\":0},{\"type\":\"geo_point\",\"indexed\":true,\"analyzed\":false,\"doc_values\":false,\"name\":\"geoip.location\",\"count\":0}]"}
+			}]
+		}
+	}`)
 	WriteResponse(w, response)
 	return
+}
+
+// Give the raw payload, parse out the command and resource.
+// Resource could be an IP, Domain, or URL
+func parsePayload(payload string) (string, string) {
+
+	// Noticed lots of requests that substituted http:// with http;//
+	payload = strings.Replace(payload, ";//", "://", -1)
+
+	re := regexp.MustCompile(`(wget|curl)\s+[^\\"]*`)
+	match := re.FindString(payload)
+	parts := strings.Fields(match)
+
+	// Return if there were no matches
+	if parts == nil || len(parts) < 2 {
+		return "", ""
+	}
+
+	// Resource can be a Domain, URL, or IP
+	resource := parts[len(parts)-1]
+	command := parts[0]
+
+	return command, resource
+}
+
+// Do the associated command, HTTP request
+func executeCommand(command string, resource string) ([]byte) {
+
+	// Initialize an empty response object
+	empty := make([]byte, 0)
+
+	if strings.EqualFold(command, "wget") || strings.EqualFold(command, "curl") {
+		resp, err := http.Get(resource)
+		if err != nil {
+			log.Printf("[!] Error: %s\n", err)
+			return empty
+		}
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("[!] Error: %s\n", err)
+			return empty
+		}
+		return body
+	}
+	return empty
 }
 
 // LogRequest handles the logging of requests to configurable endpoints
@@ -232,14 +285,47 @@ func LogRequest(r *http.Request, t string) {
 	if err != nil {
 		logger.Printf("[!] Error: %s\n", err)
 	}
+
+	// Parse the payload
+	toParse := ""
+	if strings.Contains(r.Header.Get("Content-Type"), "form") || len(body) == 0 {
+		// Handle form encoded requests
+		jsonString, err := json.Marshal(r.Form)
+		if err != nil {
+			logger.Printf("[!] Error: %s\n", err)
+		}
+		toParse = string(jsonString)
+	} else {
+		// Otherwise assume the payload is in the body
+		toParse = string(body)
+	}
+
+	// Execute the command and grab the file, is possible
+	command, resource := parsePayload(toParse)
+	payloadBinary := make([]byte, 0)
+	md5sum := ""
+	if command == "" && resource == "" {
+		// Could not parse the payload, or no command found in the payload
+		logger.Printf("[!] No curl or wget commands found in body or form")
+	} else {
+		payloadBinary = executeCommand(command, resource)
+		if len(payloadBinary) > 0 {
+			md5sum = fmt.Sprintf("%x", md5.Sum(payloadBinary))
+		}
+	}
+
 	// Create the attack entry
 	attack := Attack{
-		Timestamp: time.Now(),
-		SourceIP:  ip,
-		Method:    r.Method,
-		URL:       strings.Join([]string{r.Host, r.URL.String()}, ""),
-		Form:      r.Form.Encode(),
-		Payload:   string(body),
+		Timestamp:       time.Now(),
+		SourceIP:        ip,
+		Method:          r.Method,
+		URL:             strings.Join([]string{r.Host, r.URL.String()}, ""),
+		Form:            r.Form.Encode(),
+		Payload:         string(body),
+		PayloadCommand:  command,
+		PayloadResource: resource,
+		PayloadMd5:      md5sum,
+		PayloadBinary:   base64.StdEncoding.EncodeToString(payloadBinary),
 		Headers: Headers{
 			Host:           r.Host,
 			UserAgent:      r.UserAgent(),
@@ -249,6 +335,7 @@ func LogRequest(r *http.Request, t string) {
 		SensorIP: Conf.SensorIP,
 		Type:     t,
 	}
+
 	// Convert to JSON
 	as, err := JSONMarshal(attack)
 	if err != nil {
@@ -256,6 +343,7 @@ func LogRequest(r *http.Request, t string) {
 	}
 	err = json.Compact(as_c, as)
 	fmt.Printf("%s\n", as)
+
 	// Log the entry
 	f, err := os.OpenFile(*logFlag, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0660)
 	if err != nil {
@@ -338,7 +426,6 @@ func hpfeedsConnect() {
 		}
 	}
 }
-
 
 func main() {
 	flag.Parse()
