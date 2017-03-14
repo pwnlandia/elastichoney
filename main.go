@@ -427,6 +427,19 @@ func hpfeedsConnect() {
 	}
 }
 
+func GetOutboundIP() string {
+    conn, err := net.Dial("udp", "8.8.8.8:80")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+
+    localAddr := conn.LocalAddr().String()
+    idx := strings.LastIndex(localAddr, ":")
+
+    return localAddr[0:idx]
+}
+
 func main() {
 	flag.Parse()
 	// Get the config file
@@ -449,7 +462,7 @@ func main() {
 		Conf.SensorIP = strings.TrimSpace(string(ip))
 		resp.Body.Close()
 	} else {
-		Conf.SensorIP = "1.1.1.1"
+		Conf.SensorIP = GetOutboundIP()
 	}
 	if *verboseFlag {
 		logger.Printf("Using sensor ip: %s", Conf.SensorIP)
